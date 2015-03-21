@@ -3,4 +3,4 @@
 int mian
 123
 add fedora
-branch master
+merge branch
