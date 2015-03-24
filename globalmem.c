@@ -28,7 +28,7 @@ struct globalmem_dev *globalmem_devp;
 int globalmem_open(struct inode *inode, struct file *filp)
 {
 	struct globalmem_dev *dev;
-	dev = container_of(inode->i_cdev, struct globalmem_dev, cdev);
+	dev = container_of(inode->i_cdev, struct globalmem_dev, cdev);		//通过结构体成员的指针找到对应结构体指针，支持多个设备
 	filp->private_data = dev;
 	return 0;
 }
