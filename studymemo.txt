@@ -1,0 +1,191 @@
+一 以前版本内核：
+1）内核包含了对硬件的全部描述
+2）bootloader加载一个二进制镜像并执行。uImage or zImage
+3）bootloader提供一些额外信息，成为ATAGS，它的地址通过r2寄存器传给内核
+	ATAGS包含内存大小和地址，kernel command line等
+4）bootloader通过r1寄存器存放的machine type integer告诉内核加载哪一款board
+5)U-boot内核启动命令：bootm
+6)Barebox变量：bootm.image(?)
+
+现今的内核版本使用了Device Tree： 
+1）内核不再包含对硬件的描述，它以二进制的形式单独存储在另外的位置：the device tree blob 
+2）bootloader需要加载两个二进制文件：内核镜像和DTB     
+	内核镜像仍然是uImage或者zImage；     
+	DTB文件在arch/arm/boot/dts中，每一个board对应一个dts文件； 
+3）bootloader通过r2寄存器来传递DTB地址，通过修改DTB可以修改内存信息，kernel command line，以及潜在的其它信息； 
+4）不再有machine type； 
+5）U-Boot的内核启动命令：bootm - 
+6）Barebox变量：bootm.image,bootm.oftree
+
+/******************************************************************************************/
+有些bootloader不支持Device Tree，或者有些专门给特定设备写的版本太老了，也不包含。为了解决这个问题，CONFIG_ARM_APPENDED_DTB被引进。
+    它告诉内核，在紧跟着内核的地址里查找DTB文件；
+    由于没有built-in Makefile rule来产生这样的内核，因此需要手动操作：
+        cat arch/arm/boot/zImage arch/arm/boot/dts/myboard.dtb > my-zImage
+        mkimage ... -d my-zImage my-uImage
+    (cat这个命令，还能够直接合并两个mp3文件哦！so easy！)
+另外，CONFIG_ARM_ATAG_DTB_COMPAT选项告诉内核去bootloader里面读取ATAGS，并使用它们升级DT。
+/******************************************************************************************/
+
+
+
+二 Device Tree是什么？
+1）ePAPR使用device tree的概念描述硬件。boot程序会加载device tree到client program's memory中，并将device tree的指针传递给client；
+2）device tree是一个树形数据结构with nodes，用来描述系统的physical devices；
+3）一个ePAPR-complient device tree描述的设备信息不能被client program读取；
+
+From Source to binary
+1）在ARM系统中，所有的DTS文件放置在arch/arm/boot/dts中：
+    .dts文件为板级定义
+    .dtsi文件为SoC级定义
+2）Device Tree Compiler工具，将源代码编译成二进制形式；
+    它的源代码放置在scripts/dtc中
+3）编译器会产生DTB文件，bootloader会加载这个DTB文件，内核在boot时去解析它；
+4）arch/arm/boot/dts/Makefile会指定产生哪个DTB文件；
+
+/******************************************************************************************/
+Node name: serial
+Unit Address: 0x44e09000
+compatible: 定义了设备的programming model，允许操作系统识别对应的程序驱动；
+clock-frequency: 48000000，晶振频率为24MHz，这应该是PLL倍频后的输出（？）；
+reg: 寄存器的地址和寄存器长度，uart0的地址起始为0x44e09000，长度为0x2000；
+interrupts: 中断号；
+status: 状态值，初始的时候为disabled，即禁用它；
+/******************************************************************************************/
+
+
+
+三 Device Tree的编写规则
+1）Device Tree inclusion不一定要做成monolithic，它们可以分散在不同的文件中，互相包含；
+2）.dtsi文件是被包含的，.dts文件才是最终的Device Trees；
+3）.dts文件包含了板级信息；
+4）including工作主要是将including file覆盖到included file上面；
+5）inclusion使用DT操作符/include/，或者在某些少量的内核发布版中，由于DTS是使用了C preprocessor，因此推荐#include。
+
+如果included file中的某项，被including file文件定义了，则会使用后者的定义，也就是使用更上层更新的定义；如果没有被定义，则添加进入。
+
+1）bindings是device tree里面可已包含的specific types and classes of devices。
+2）compatible特征描述了节点编译的specific binding；
+3）当为一个设备创建新的device tree时，应该创建a binding来描述设备的全部细节
+
+
+
+四 Device Tree的文档
+1）所有可被内核识别的Device Tree bindings在文档Documentation/devicetree/bindings里面；
+2）每个binding文档描述了哪些properties可以被接受，可以使用哪些值，哪些特征是必须的，哪些是可选的；
+3）所有新的Device Tree bindings必须让代码维护者审核，提交到devicetree@vger.kernel.org上。这用来保证它们的正确性和一致性。
+
+
+
+五 Device Tree中的常见关键字的含义
+Device Tree organization: top-level nodes
+在设备的最顶层节点上，一般可以发现如下这些：
+cpus：描述了系统的CPU
+memory：定义了RAM的地址和大小
+chosen：定义了boot时被系统固件选择或定义的参数；可用来传递kernel command line；
+aliases：定义了certain nodes的shotcuts；
+一个或多个总线定义；
+一个或多个板上设备定义；
+
+
+
+六 相关内容
+DTC (device tree compiler)
+将.dts编译为.dtb的工具。DTC的源代码位于内核的scripts/dtc目录，在Linux内核使能了Device Tree的情况下，
+编译内核的时候主机工具dtc会被编译出来，对应scripts/dtc/Makefile中的“hostprogs-y := dtc”这一hostprogs编译target。
+在Linux下，我们可以单独编译Device Tree文件。当我们在Linux内核下运行make dtbs时，若我们之前选择了ARCH_VEXPRESS，
+上述.dtb都会由对应的.dts编译出来。因为arch/arm/Makefile中含有一个dtbs编译target项目。
+
+Bootloader
+Uboot mainline 从 v1.1.3开始支持Device Tree，其对ARM的支持则是和ARM内核支持Device Tree同期完成。
+为了使能Device Tree，需要编译Uboot的时候在config文件中加入
+#define CONFIG_OF_LIBFDT
+在Uboot中，可以从NAND、SD或者TFTP等任意介质将.dtb读入内存，假设.dtb放入的内存地址为0x71000000，之后可在Uboot运行命令fdt addr命令设置.dtb的地址，如：
+U-Boot> fdt addr 0x71000000
+fdt的其他命令就变地可以使用，如fdt resize、fdt print等。
+对于ARM来讲，可以透过bootz kernel_addr initrd_address dtb_address的命令来启动内核，即dtb_address作为bootz或者bootm的最后一次参数，第一个参数为内核映像的地址，
+第二个参数为initrd的地址，若不存在initrd，可以用 -代替。
+
+
+
+七 Device Tree引发的BSP和驱动变更
+platform_device代码都不再需要，其中platform_device会由kernel自动展开。
+而这些resource实际来源于.dts中设备结点的reg、interrupts属性。典型地，大多数总线都与“simple_bus”兼容，
+而在SoC对应的machine的.init_machine成员函数中，调用of_platform_bus_probe(NULL, xxx_of_bus_ids, NULL);即可自动展开所有的platform_device。
+譬如，假设我们有个XXX SoC，则可在arch/arm/mach-xxx/的板文件中透过如下方式展开.dts中的设备结点对应的platform_device
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+linux启动过程 C部分
+/init/main.c
+start_kernel->setuparch->setup_machine_fdt 识别设备树
+
+
+
+
+//////////////////////////////////设备驱动开发///////////////////////////////////////////////////////////
+/////中断
+申请中断
+    int request_irq(unsigned int irq, irq_handler_t handler, unsigned long irqflags, const char *devname, void *dev_id)
+    一般在设备驱动的加载函数中，推荐放在第一次打开设备时
+
+释放中断
+    void free_irq(unsigned int irq, void *dev_id)
+    一般放在设备驱动的卸载函数中，推荐放在release函数中
+
+使能和屏蔽中断
+    void disable_irq(int irq)       立即返回
+    void disable_irq_nosync(int irq)    等待目前中断处理完成
+    void enable_irq(int irq)    
+
+屏蔽CPU内所有中断
+    #difine local_irq_save(flags)   ...
+    void local_irq_disable(void)
+恢复
+    #define local_irq_restore(flags)
+    void local_irq_enable(void)
+
+底半部机制
+    tasklet
+        void my_tasklet_func(unsigned long) 定义一个处理函数
+        DECLARE_TASKLET(my_tasklet, my_tasklet_func,daota)  定义一个tasklet并与处理函数关联
+        tasklet_schedule(&my_tasklet)   调度tasklet
+
+        处理机制
+            在外部定义tasklet并和底半部处理函数关联
+            在加载或打开函数中申请中断并关联顶半部处理函数
+            在卸载或关闭函数中释放中断
+            在顶半部处理函数中调度底半部的tasklet
+
+    工作队列
+        struct work_struct my_wq   定义一个工作队列
+        void my_wq_func(unsigned long)  定义一个处理函数
+        INIT_WORK(&my_wq, (void (*)(void *)) my_wq_func, NULL)  初始化工作队列并与处理函数绑定
+        schedule_work(&my_wq) 调度工作队列
+
+        处理机制
+            在外部定义工作队列和关联函数
+            在加载或打开函数中申请中断并关联顶半部处理函数，初始化工作队列
+            在卸载或关闭函数中释放中断
+            在顶半部处理函数中调度底半部的工作队列
+
+中断共享
+    在申请中断时以IRQF_SHARED为标志
+    在顶半部处理函数中判断是否是本设备中断，是则处理后返回IRQ_HANDLED，否则返回IRQ_NONE。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
